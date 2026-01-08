@@ -135,4 +135,5 @@ async def on_message(message):
             
 keep_alive()
 # ใส่ Token
-bot.run('MTQ1ODgyMDI1MzYzNDAwMzA3OQ.G2iqRu.GpT1AktF2ckbC8RxfuFb_ecFEWHalS42Nm1_n0')
+
+bot.run('MTQ1ODgyMDI1MzYzNDAwMzA3OQ.GZLgmm.fqe_8bqfUo8RXEuE7Ok-frSgPF9NcA6AycKL1I')
