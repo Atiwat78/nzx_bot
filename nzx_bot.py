@@ -7,6 +7,7 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
+# --- ส่วน Web Server (Keep Alive) ---
 app = Flask('')
 @app.route('/')
 def main():
@@ -18,6 +19,7 @@ def run():
 def keep_alive():
     t = Thread(target=run)
     t.start()
+# -----------------------------------
 
 # ตั้งค่า Permission
 intents = discord.Intents.default()
@@ -28,29 +30,28 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # ตัวแปรเก็บคิวข้อความ
 tts_queue = [] 
 
-# --- (สำคัญ) ตัวล็อคสถานะ กันบอททำงานซ้อนกัน ---
+# ตัวล็อคสถานะ กันบอททำงานซ้อนกัน
 is_speaking = False 
+
+# --- (เพิ่มใหม่) ตัวแปรจำห้องที่จะให้อ่าน ---
+active_text_channel_id = None
 
 # เลือกเสียง
 VOICE = 'th-TH-PremwadeeNeural'
 
 @bot.event
 async def on_ready():
-    print(f'✅ บอท {bot.user} ออนไลน์ (โหมดไหลลื่น ไม่ตัดบท)!')
+    print(f'✅ บอท {bot.user} ออนไลน์ (โหมดอ่านเฉพาะห้องที่เรียก)!')
 
 # --- ฟังก์ชันเล่นเสียง ---
 async def play_next(ctx):
     global is_speaking
     
-    # 1. เช็คว่ามีคิวเหลือไหม
     if not tts_queue:
-        is_speaking = False # ปลดล็อคเมื่อคิวหมด
+        is_speaking = False 
         return
 
-    # 2. ล็อคสถานะไว้ บอกว่า "ฉันทำงานอยู่นะ"
     is_speaking = True
-    
-    # 3. ดึงข้อความ
     text = tts_queue.pop(0)
     
     if not text.strip():
@@ -58,56 +59,57 @@ async def play_next(ctx):
         return
 
     try:
-        # ตั้งชื่อไฟล์ไม่ให้ซ้ำ
         filename = f"voice_{int(time.time() * 1000)}.mp3"
-        
-        # โหลดเสียงจาก Edge-TTS
         communicate = edge_tts.Communicate(text, VOICE)
         await communicate.save(filename)
 
         vc = ctx.guild.voice_client
         if vc:
+            # Render ใช้ Linux ไม่ต้องระบุ path ffmpeg.exe
             source = discord.FFmpegPCMAudio(source=filename)
-            
-            # เล่นเสียง และเมื่อจบให้ไปเรียกฟังก์ชันลบไฟล์
             vc.play(source, after=lambda e: cleanup_and_next(ctx, filename))
         else:
-            # ถ้าบอทไม่อยู่ในห้องแล้ว ให้เคลียร์สถานะ
             is_speaking = False
             
     except Exception as e:
         print(f"Error: {e}")
-        # ถ้า Error ให้ข้ามไปตัวต่อไป อย่าหยุดทำงาน
         await play_next(ctx)
 
 def cleanup_and_next(ctx, filename):
-    # ฟังก์ชันนี้ทำงานหลังจากพูดจบ
     try:
         if os.path.exists(filename):
             os.remove(filename)
     except:
         pass
-    
-    # เรียก play_next ให้ทำงานต่อทันที (Loop)
     bot.loop.create_task(play_next(ctx))
 
 # --- คำสั่ง ---
 
 @bot.command()
 async def join(ctx):
+    global active_text_channel_id # เรียกใช้ตัวแปรจำห้อง
+
     if ctx.author.voice:
         channel = ctx.author.voice.channel
         await channel.connect()
-        await ctx.send(f"⚡ บอทมาแล้ว! (พิมพ์รัวได้เลย ไม่ตัดบท)")
+        
+        # (สำคัญ) จำ ID ของห้องที่พิมพ์คำสั่งนี้
+        active_text_channel_id = ctx.channel.id 
+        
+        await ctx.send(f"⚡ บอทมาแล้ว! จะอ่านข้อความจากห้อง **{ctx.channel.name}** เท่านั้นนะ")
     else:
         await ctx.send("❌ เข้าห้องเสียงก่อนครับ")
 
 @bot.command()
 async def leave(ctx):
-    global is_speaking
+    global is_speaking, active_text_channel_id
     if ctx.voice_client:
         tts_queue.clear()
-        is_speaking = False # รีเซ็ตสถานะ
+        is_speaking = False
+        
+        # (สำคัญ) ล้างค่าห้องเมื่อบอทออก
+        active_text_channel_id = None 
+        
         await ctx.voice_client.disconnect()
         await ctx.send("👋 บาย")
 
@@ -118,24 +120,27 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # ให้คำสั่ง ! ทำงานได้เสมอ (แม้ผิดห้อง)
     await bot.process_commands(message)
 
     if message.guild.voice_client and not message.content.startswith('!'):
+        
+        # --- (จุดคัดกรอง) ---
+        # ถ้ายังไม่มีใครเรียก (!join) หรือ ห้องที่พิมพ์มา ไม่ตรงกับห้องที่จำไว้
+        if active_text_channel_id is None or message.channel.id != active_text_channel_id:
+            return # จบการทำงาน ไม่ต้องอ่าน
+        # ------------------
+
         if not message.content.strip():
             return
 
-        # 1. เอาข้อความใส่คิวอย่างเดียว
         tts_queue.append(message.content)
 
-        # 2. เช็คที่ตัวแปร is_speaking แทน (เสถียรกว่าการเช็ค vc.is_playing)
-        # ถ้าบอท "ไม่ได้ทำงานอยู่" ให้เริ่มระบบ Loop ใหม่
-        # แต่ถ้า "ทำงานอยู่แล้ว" (is_speaking = True) ก็ไม่ต้องทำอะไร เดี๋ยว Loop เก่ามันจะวนมาอ่านคิวเอง
         if not is_speaking:
             await play_next(message)
             
+# รัน Web Server กันหลับ
 keep_alive()
-# ใส่ Token
 
+# ใช้ Token จาก Environment Variable (ปลอดภัยแล้ว)
 bot.run(os.getenv('TOKEN'))
-
-
