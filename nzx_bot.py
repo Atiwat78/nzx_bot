@@ -67,7 +67,7 @@ async def play_next(ctx):
 
         vc = ctx.guild.voice_client
         if vc:
-            source = discord.FFmpegPCMAudio(source=filename, executable='./ffmpeg.exe')
+            source = discord.FFmpegPCMAudio(source=filename)
             
             # เล่นเสียง และเมื่อจบให้ไปเรียกฟังก์ชันลบไฟล์
             vc.play(source, after=lambda e: cleanup_and_next(ctx, filename))
@@ -137,4 +137,5 @@ keep_alive()
 # ใส่ Token
 
 bot.run(os.getenv('TOKEN'))
+
 
