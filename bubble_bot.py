@@ -139,9 +139,19 @@ async def on_message(message):
         if not is_speaking:
             await play_next(message)
             
+# ... (โค้ดด้านบนเหมือนเดิม) ...
+
 # รัน Web Server กันหลับ
 keep_alive()
 
-# ใช้ Token จาก Environment Variable (ปลอดภัยแล้ว)
-bot.run(os.getenv('TOKEN'))
+# --- ส่วนที่แก้เพิ่ม (Debug) ---
+my_secret = os.getenv('TOKEN')
 
+if my_secret is None:
+    print("❌ Error: ไม่เจอ Token! (เช็กชื่อตัวแปรใน Render ด่วน)")
+else:
+    print(f"✅ เจอ Token แล้ว: {my_secret[:5]}... (กำลังพยายาม Login)")
+    try:
+        bot.run(my_secret)
+    except Exception as e:
+        print(f"❌ Login พังเพราะ: {e}")
