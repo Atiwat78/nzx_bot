@@ -131,10 +131,30 @@ async def on_message(message):
         if not is_speaking:
             await play_next(message)
 
-# เริ่มระบบ
+# ==========================================
+# ส่วนรันระบบแบบใหม่ (Crash Reporting)
+# ==========================================
+import sys
+
+# 1. เริ่ม Web Server
+print(">> Step 1: Starting Web Server...", file=sys.stderr)
 keep_alive()
+
+# 2. เตรียม Token
 token = os.getenv('TOKEN')
-if token:
-    bot.run(token.strip())
-else:
-    print("CRITICAL ERROR: No Token Found - Bot cannot start")
+if not token:
+    print("CRITICAL ERROR: TOKEN NOT FOUND! (ไม่เจอ Token ใน Environment)", file=sys.stderr)
+    sys.exit(1) # สั่งปิดโปรแกรมทันที
+
+# 3. เริ่มรันบอท (พร้อมดักจับ Error)
+print(f">> Step 2: Attempting to login with Token ending in ...{token[-5:]}", file=sys.stderr)
+print(">> PLEASE WATCH LOGS NOW...", file=sys.stderr)
+
+try:
+    # ลบช่องว่างหัวท้ายกันเหนียว
+    bot.run(token.strip()) 
+except Exception as e:
+    # ถ้าบรรทัดนี้ทำงาน แสดงว่าบอทตาย -> สั่งปริ้น Error ตัวแดงทันที
+    print(f"\n\n!!! FATAL ERROR: บอทเริ่มทำงานไม่ได้ !!!\nสาเหตุ: {e}\n\n", file=sys.stderr)
+    # สั่งฆ่า Web Server ให้ตายตามไปด้วย (Render จะได้รู้ว่าพัง)
+    os._exit(1)
