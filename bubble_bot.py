@@ -14,16 +14,17 @@ def main():
     return "Bot is alive!"
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    # ใช้ Port ตามที่ Render กำหนด หรือ 8080
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
     t.start()
 # -----------------------------------
 
-# ตั้งค่า Permission
-intents = discord.Intents.default()
-intents.message_content = True 
+# --- ตั้งค่า Permission (เปิดรับทุกสิทธิ์เพื่อให้บอทเห็นทุกอย่าง) ---
+intents = discord.Intents.all() 
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -33,7 +34,7 @@ tts_queue = []
 # ตัวล็อคสถานะ กันบอททำงานซ้อนกัน
 is_speaking = False 
 
-# --- (เพิ่มใหม่) ตัวแปรจำห้องที่จะให้อ่าน ---
+# ตัวแปรจำห้องที่จะให้อ่าน
 active_text_channel_id = None
 
 # เลือกเสียง
@@ -64,15 +65,15 @@ async def play_next(ctx):
         await communicate.save(filename)
 
         vc = ctx.guild.voice_client
-        if vc:
-            # Render ใช้ Linux ไม่ต้องระบุ path ffmpeg.exe
+        # เช็คให้ชัวร์ว่าบอทยังเชื่อมต่อกับห้องเสียงอยู่
+        if vc and vc.is_connected():
             source = discord.FFmpegPCMAudio(source=filename)
             vc.play(source, after=lambda e: cleanup_and_next(ctx, filename))
         else:
             is_speaking = False
             
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error ตอนเล่นเสียง: {e}")
         await play_next(ctx)
 
 def cleanup_and_next(ctx, filename):
@@ -87,18 +88,27 @@ def cleanup_and_next(ctx, filename):
 
 @bot.command()
 async def join(ctx):
-    global active_text_channel_id # เรียกใช้ตัวแปรจำห้อง
+    global active_text_channel_id 
 
     if ctx.author.voice:
         channel = ctx.author.voice.channel
-        await channel.connect()
-        
-        # (สำคัญ) จำ ID ของห้องที่พิมพ์คำสั่งนี้
-        active_text_channel_id = ctx.channel.id 
-        
-        await ctx.send(f"⚡ บอทมาแล้ว! จะอ่านข้อความจากห้อง **{ctx.channel.name}** เท่านั้นนะ")
+        try:
+            # สั่งให้เข้าห้องเสียง
+            if ctx.voice_client is not None:
+                await ctx.voice_client.move_to(channel)
+            else:
+                await channel.connect()
+            
+            # จำ ID ห้องแชทที่พิมพ์คำสั่ง
+            active_text_channel_id = ctx.channel.id 
+            
+            await ctx.send(f"⚡ บอทมาแล้ว! จะอ่านข้อความจากห้อง **{ctx.channel.name}** เท่านั้นนะ")
+        except Exception as e:
+            # ถ้าเข้าไม่ได้ จะแจ้ง Error ในแชทเลย
+            await ctx.send(f"❌ บอทเข้าห้องไม่ได้ครับ (Error: {e})")
+            print(f"Join Error: {e}")
     else:
-        await ctx.send("❌ เข้าห้องเสียงก่อนครับ")
+        await ctx.send("❌ คุณต้องเข้าไปอยู่ในห้องเสียงก่อนครับ")
 
 @bot.command()
 async def leave(ctx):
@@ -106,12 +116,12 @@ async def leave(ctx):
     if ctx.voice_client:
         tts_queue.clear()
         is_speaking = False
-        
-        # (สำคัญ) ล้างค่าห้องเมื่อบอทออก
         active_text_channel_id = None 
         
         await ctx.voice_client.disconnect()
         await ctx.send("👋 บาย")
+    else:
+        await ctx.send("❌ บอทยังไม่ได้อยู่ในห้องเสียงเลย")
 
 @bot.event
 async def on_message(message):
@@ -120,16 +130,14 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # ให้คำสั่ง ! ทำงานได้เสมอ (แม้ผิดห้อง)
+    # คำสั่ง ! ต้องทำงานได้เสมอ
     await bot.process_commands(message)
 
+    # กรองเฉพาะตอนบอทอยู่ในห้อง และไม่ใช่คำสั่ง
     if message.guild.voice_client and not message.content.startswith('!'):
         
-        # --- (จุดคัดกรอง) ---
-        # ถ้ายังไม่มีใครเรียก (!join) หรือ ห้องที่พิมพ์มา ไม่ตรงกับห้องที่จำไว้
         if active_text_channel_id is None or message.channel.id != active_text_channel_id:
-            return # จบการทำงาน ไม่ต้องอ่าน
-        # ------------------
+            return 
 
         if not message.content.strip():
             return
@@ -138,19 +146,17 @@ async def on_message(message):
 
         if not is_speaking:
             await play_next(message)
-            
-# ... (โค้ดด้านบนเหมือนเดิม) ...
 
 # รัน Web Server กันหลับ
 keep_alive()
 
-# --- ส่วนที่แก้เพิ่ม (Debug) ---
+# --- ดึง Token มารัน ---
 my_secret = os.getenv('TOKEN')
 
 if my_secret is None:
     print("❌ Error: ไม่เจอ Token! (เช็กชื่อตัวแปรใน Render ด่วน)")
 else:
-    print(f"✅ เจอ Token แล้ว: {my_secret[:5]}... (กำลังพยายาม Login)")
+    print(f"✅ เจอ Token แล้ว... (กำลังพยายาม Login)")
     try:
         bot.run(my_secret)
     except Exception as e:
